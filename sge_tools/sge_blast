@@ -4,6 +4,8 @@ use Cwd 'abs_path';
 use strict;
 use warnings;
 use Getopt::Long qw(:config pass_through no_auto_abbrev);
+use File::Temp qw/ tempfile tempdir /;
+use File::Basename;
 
 my ($infile, $dbname, $num_fasta, $outfile, $threads, $allocation, $time, $num_jobs, $outfmt, $F, $keep) = ("", "", "", "", "", "", "47:00:00","","","",0);
 GetOptions (
@@ -48,10 +50,11 @@ if (not (-f "$dbpath.nal" or -f "$dbpath.pal" or -f "$dbpath.nin" or -f "$dbpath
   }
 } 
 
-my $qsub_options = "-cwd -R y";
-$qsub_options .= " -pe memory-2G $threads" if $threads;
+my $qsub_options = "-cwd -R y -q rcc-30d -q rcc-mc-30d";
+$qsub_options .= " -pe thread $threads" if $threads;
 $qsub_options .= " -P $allocation" if $allocation;
 $qsub_options .= " -l h_rt=$time" if $time;
+$qsub_options .= " -tc 10";
 
 my $command = join(' ',@ARGV);
 $command .= " -outfmt \"$outfmt\"" if $outfmt; #put quotes around -outfmt options
@@ -99,6 +102,17 @@ while (<INFILE>) {
 close INFILE; unlink "input.fasta"; print STDERR "\n";
 
 #------------------------------------------------------------------------------
+# create a temporary directory in lscratch to rsync the blast databases
+# this will hopefully increase the blast speed.
+#------------------------------------------------------------------------------
+
+#my $template = "blastdb.XXXXXXXXXX";
+#my $temp_dir = tempdir(  $template, TMPDIR => 1, CLEANUP => 1 );
+#my $db_basename = 
+#my $new_dbpath = 
+
+
+#------------------------------------------------------------------------------
 # create qsub shell script in tmp_dir
 #------------------------------------------------------------------------------
 
@@ -110,8 +124,17 @@ print SHFILE <<SH;
 # database path = $dbpath
 # num of jobs   = $filenumber
 #\$ $qsub_options
-. /etc/profile
-module load blast/ncbi
+#. /etc/profile
+#module load blast/ncbi
+
+fname=`basename $dbpath`
+TMP_DIR=/lscratch/\$USER/blastdb/\$fname
+mkdir -p \$TMP_DIR
+flock -x \$TMP_DIR/.done  rsync -av $dbpath\** \$TMP_DIR/
+
+newdbpath=\$TMP_DIR/\$fname
+echo New db path: \$newdbpath
+
 SH
 
 #module add blast/ncbi/latest --> this is replaced by module load blast/ncbi
@@ -119,9 +142,9 @@ SH
 $threads = 1 unless $threads;
 
 if ($command =~ /^blastall/ or $command =~ /^megablast/)
-{ print SHFILE "$command -i \$SGE_TASK_ID.fasta -o \$SGE_TASK_ID.out -a $threads -d $dbpath" }
+{ print SHFILE "$command -i \$SGE_TASK_ID.fasta -o \$SGE_TASK_ID.out -a $threads -d \$newdbpath" }
 else
-{ print SHFILE "$command -query \$SGE_TASK_ID.fasta -out \$SGE_TASK_ID.out -num_threads $threads -db $dbpath" }
+{ print SHFILE "$command -query \$SGE_TASK_ID.fasta -out \$SGE_TASK_ID.out -num_threads $threads -db \$newdbpath" }
 print SHFILE "\ntouch \$SGE_TASK_ID.done";
 close SHFILE;
 
