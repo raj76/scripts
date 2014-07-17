@@ -7,7 +7,7 @@ use Getopt::Long qw(:config pass_through no_auto_abbrev);
 use File::Temp qw/ tempfile tempdir /;
 use File::Basename;
 
-my ($infile, $dbname, $num_fasta, $outfile, $threads, $allocation, $time, $num_jobs, $outfmt, $F, $keep) = ("", "", "", "", "", "", "47:00:00","","","",0);
+my ($infile, $dbname, $num_fasta, $outfile, $threads, $allocation, $time, $num_jobs, $outfmt, $F, $keep, $local_copy) = ("", "", "", "", "", "", "47:00:00","","","",0,0);
 GetOptions (
   "i|query:s" => \$infile,
   "num_fasta:i" => \$num_fasta,
@@ -20,6 +20,7 @@ GetOptions (
   "F:s" => \$F,
   "d|db:s" => \$dbname,
   "keep" => \$keep,
+  "local_copy" => \$local_copy,
 );
 
 my $usage= "  Usage: Prefix your regular blast command line by sge_blast\n" .
@@ -31,7 +32,8 @@ my $usage= "  Usage: Prefix your regular blast command line by sge_blast\n" .
 	"  Use -time hh:mm:ss to specify time limit for each job. Default 47:00:00, i.e. 47 hours\n" .
 	"  Use -a or -num_threads to allocate extra cores/memory slots (each mem slot is 2GB) per job. Default 1\n" .
 	"  Use -keep if you want to keep the temporary directory after the job finishes\n" .
-	"  Use -allocation or -project to specify a different ECDF project allocation than your default\n";
+	"  Use -allocation or -project to specify a different ECDF project allocation than your default\n" .
+	"  Use -local_copy to indicate that you want to create a local copy of the blast databases in the execution nodes lscratch area.\n";
 
 $outfile =~ s'.*/''; $outfile = "tmp" unless $outfile;
 
@@ -101,15 +103,7 @@ while (<INFILE>) {
 }
 close INFILE; unlink "input.fasta"; print STDERR "\n";
 
-#------------------------------------------------------------------------------
-# create a temporary directory in lscratch to rsync the blast databases
-# this will hopefully increase the blast speed.
-#------------------------------------------------------------------------------
 
-#my $template = "blastdb.XXXXXXXXXX";
-#my $temp_dir = tempdir(  $template, TMPDIR => 1, CLEANUP => 1 );
-#my $db_basename = 
-#my $new_dbpath = 
 
 
 #------------------------------------------------------------------------------
@@ -127,12 +121,24 @@ print SHFILE <<SH;
 #. /etc/profile
 #module load blast/ncbi
 
-fname=`basename $dbpath`
-TMP_DIR=/lscratch/\$USER/blastdb/\$fname
-mkdir -p \$TMP_DIR
-flock -x \$TMP_DIR/.done  rsync -av $dbpath\** \$TMP_DIR/
+#------------------------------------------------------------------------------
+# create a temporary directory in lscratch to rsync the blast databases
+# this will hopefully increase the blast speed.
+#------------------------------------------------------------------------------
 
-newdbpath=\$TMP_DIR/\$fname
+if expr $local_copy = 1
+then
+    fname=`basename $dbpath`
+    TMP_DIR=/lscratch/\$USER/blastdb/\$fname
+    mkdir -p \$TMP_DIR
+    flock -x \$TMP_DIR/.done  rsync -av $dbpath\** \$TMP_DIR/
+    newdbpath=\$TMP_DIR/\$fname
+
+else
+
+    newdbpath=$dbpath
+
+fi
 echo New db path: \$newdbpath
 
 SH
